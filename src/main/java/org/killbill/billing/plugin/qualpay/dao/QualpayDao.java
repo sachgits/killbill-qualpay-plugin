@@ -40,6 +40,8 @@ import org.killbill.billing.plugin.qualpay.dao.gen.tables.QualpayPaymentMethods;
 import org.killbill.billing.plugin.qualpay.dao.gen.tables.QualpayResponses;
 import org.killbill.billing.plugin.qualpay.dao.gen.tables.records.QualpayPaymentMethodsRecord;
 import org.killbill.billing.plugin.qualpay.dao.gen.tables.records.QualpayResponsesRecord;
+import org.killbill.billing.plugin.qualpay.models.OnlineSuccessfullRes;
+import org.killbill.billing.plugin.qualpay.models.B2C.Business2CustomerResponse;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.google.common.collect.ImmutableMap;
@@ -123,7 +125,7 @@ public class QualpayDao extends PluginPaymentDao<QualpayResponsesRecord, Qualpay
                                               final TransactionType transactionType,
                                               final BigDecimal amount,
                                               final Currency currency,
-                                              final GatewayResponse gatewayResponse,
+                                              final OnlineSuccessfullRes gatewayResponse,
                                               final DateTime utcNow,
                                               final UUID kbTenantId) throws SQLException {
         final Map<String, Object> additionalDataMap = QualpayPluginProperties.toAdditionalDataMap(gatewayResponse);
@@ -150,7 +152,7 @@ public class QualpayDao extends PluginPaymentDao<QualpayResponsesRecord, Qualpay
                                                  transactionType.toString(),
                                                  amount,
                                                  currency == null ? null : currency.name(),
-                                                 gatewayResponse.getPgId(),
+                                                 gatewayResponse.getBody().getStkCallback().getCheckoutRequestID(),
                                                  asString(additionalDataMap),
                                                  toTimestamp(utcNow),
                                                  kbTenantId.toString())
@@ -160,8 +162,52 @@ public class QualpayDao extends PluginPaymentDao<QualpayResponsesRecord, Qualpay
                        });
     }
 
+    public QualpayResponsesRecord addResponse(final UUID kbAccountId,
+                                              final UUID kbPaymentId,
+                                              final UUID kbPaymentTransactionId,
+                                              final TransactionType transactionType,
+                                              final BigDecimal amount,
+                                              final Currency currency,
+                                              final Business2CustomerResponse gatewayResponse,
+                                              final DateTime utcNow,
+                                              final UUID kbTenantId) throws SQLException {
+        final Map<String, Object> additionalDataMap = QualpayPluginProperties.toAdditionalDataMap(gatewayResponse);
+
+        return execute(dataSource.getConnection(),
+                       new WithConnectionCallback<QualpayResponsesRecord>() {
+                           @Override
+                           public QualpayResponsesRecord withConnection(final Connection conn) throws SQLException {
+                               return DSL.using(conn, dialect, settings)
+                                         .insertInto(QUALPAY_RESPONSES,
+                                                     QUALPAY_RESPONSES.KB_ACCOUNT_ID,
+                                                     QUALPAY_RESPONSES.KB_PAYMENT_ID,
+                                                     QUALPAY_RESPONSES.KB_PAYMENT_TRANSACTION_ID,
+                                                     QUALPAY_RESPONSES.TRANSACTION_TYPE,
+                                                     QUALPAY_RESPONSES.AMOUNT,
+                                                     QUALPAY_RESPONSES.CURRENCY,
+                                                     QUALPAY_RESPONSES.QUALPAY_ID,
+                                                     QUALPAY_RESPONSES.ADDITIONAL_DATA,
+                                                     QUALPAY_RESPONSES.CREATED_DATE,
+                                                     QUALPAY_RESPONSES.KB_TENANT_ID)
+                                         .values(kbAccountId.toString(),
+                                                 kbPaymentId.toString(),
+                                                 kbPaymentTransactionId.toString(),
+                                                 transactionType.toString(),
+                                                 amount,
+                                                 currency == null ? null : currency.name(),
+                                                 gatewayResponse.getResult().getConversationID(),
+                                                 asString(additionalDataMap),
+                                                 toTimestamp(utcNow),
+                                                 kbTenantId.toString())
+                                         .returning()
+                                         .fetchOne();
+                           }
+                       });
+    }
+
+
     public QualpayResponsesRecord updateResponse(final UUID kbPaymentTransactionId,
-                                                 final GatewayResponse gatewayResponse,
+                                                 final OnlineSuccessfullRes gatewayResponse,
                                                  final UUID kbTenantId) throws SQLException {
         final Map<String, Object> additionalDataMap = QualpayPluginProperties.toAdditionalDataMap(gatewayResponse);
         return updateResponse(kbPaymentTransactionId, additionalDataMap, kbTenantId);

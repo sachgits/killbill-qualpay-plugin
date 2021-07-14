@@ -20,6 +20,9 @@ package org.killbill.billing.plugin.qualpay;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.killbill.billing.plugin.qualpay.models.OnlineSuccessfullRes;
+import org.killbill.billing.plugin.qualpay.models.B2C.Business2CustomerResponse;
+
 import io.swagger.client.model.BillingCard;
 import io.swagger.client.model.GatewayResponse;
 
@@ -44,15 +47,26 @@ public abstract class QualpayPluginProperties {
 
         return additionalDataMap;
     }
+    public static Map<String, Object> toAdditionalDataMap(final OnlineSuccessfullRes gatewayResponse) {
+       final Map<String, Object> additionalDataMap = new HashMap<String, Object>();
 
-    public static Map<String, Object> toAdditionalDataMap(final GatewayResponse gatewayResponse) {
-        final Map<String, Object> additionalDataMap = new HashMap<String, Object>();
-
-        additionalDataMap.put("id", gatewayResponse.getPgId());
-        additionalDataMap.put("rcode", gatewayResponse.getRcode());
-        additionalDataMap.put("rmsg", gatewayResponse.getRmsg());
-        additionalDataMap.put("auth_code", gatewayResponse.getAuthCode());
+        additionalDataMap.put("id", gatewayResponse.getBody().getStkCallback().getMerchantRequestID());
+        additionalDataMap.put("rcode", gatewayResponse.getBody().getStkCallback().getResultCode());
+        additionalDataMap.put("rmsg", gatewayResponse.getBody().getStkCallback().getResultDesc());
+        additionalDataMap.put("auth_code", gatewayResponse.getBody().getStkCallback().getCheckoutRequestID());
 
         return additionalDataMap;
     }
-}
+    
+
+	public static Map<String, Object> toAdditionalDataMap(Business2CustomerResponse gatewayResponse) {
+		 final Map<String, Object> additionalDataMap = new HashMap<String, Object>();
+
+        additionalDataMap.put("id", gatewayResponse.getResult().getConversationID());
+        additionalDataMap.put("rcode", gatewayResponse.getResult().getResultCode());
+        additionalDataMap.put("rmsg", gatewayResponse.getResult().getResultDesc());
+        additionalDataMap.put("auth_code", gatewayResponse.getResult().getOriginatorConversationID());
+
+        return additionalDataMap;
+        
+	}}
