@@ -39,12 +39,14 @@ import org.killbill.billing.osgi.libs.killbill.OSGIKillbillAPI;
 import org.killbill.billing.osgi.libs.killbill.OSGIKillbillLogService;
 import org.killbill.billing.payment.api.PaymentApiException;
 import org.killbill.billing.payment.api.PaymentMethodPlugin;
+import org.killbill.billing.payment.api.PaymentTransaction;
 import org.killbill.billing.payment.api.PluginProperty;
 import org.killbill.billing.payment.api.TransactionType;
 import org.killbill.billing.payment.plugin.api.GatewayNotification;
 import org.killbill.billing.payment.plugin.api.HostedPaymentPageFormDescriptor;
 import org.killbill.billing.payment.plugin.api.PaymentMethodInfoPlugin;
 import org.killbill.billing.payment.plugin.api.PaymentPluginApiException;
+import org.killbill.billing.payment.plugin.api.PaymentPluginStatus;
 import org.killbill.billing.payment.plugin.api.PaymentTransactionInfoPlugin;
 import org.killbill.billing.plugin.api.PluginProperties;
 import org.killbill.billing.plugin.api.core.PluginCustomField;
@@ -131,101 +133,36 @@ public class QualpayPaymentPluginApi extends
     public void addPaymentMethod(final UUID kbAccountId, final UUID kbPaymentMethodId,
             final PaymentMethodPlugin paymentMethodProps, final boolean setDefault,
             final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
-        final String qualpayCustomerIdMaybeNull = getCustomerIdNoException(kbAccountId, context);
-        final String cardIdMaybeNull = PluginProperties.findPluginPropertyValue("card_id", properties);
-
-        final String qualpayId;
-        if (qualpayCustomerIdMaybeNull != null && paymentMethodProps.getExternalPaymentMethodId() != null) {
-            // The customer and payment method already exist (sync code path), we just need
-            // to update our tables
-            qualpayId = paymentMethodProps.getExternalPaymentMethodId();
-        } else if (qualpayCustomerIdMaybeNull == null && paymentMethodProps.getExternalPaymentMethodId() != null) {
-            // Invalid sync path
-            throw new PaymentPluginApiException("USER",
-                    "Specified Qualpay card id but missing QUALPAY_CUSTOMER_ID custom field");
-        } else if (cardIdMaybeNull != null) {
-            // Card was tokenized via the Payment Gateway API - we will simply store the
-            // card locally
-            qualpayId = cardIdMaybeNull;
-        } else {
-            // We need to create a new payment method, either on a new customer or on an
-            // existing one (for testing or for companies with a tokenization proxy)
-            final ApiClient apiClient = buildApiClient(context, true);
-            final CustomerVaultApi customerVaultApi = new CustomerVaultApi(apiClient);
-
-            final AddBillingCardRequest billingCardsItem = new AddBillingCardRequest();
-            billingCardsItem.setCardNumber(PluginProperties.findPluginPropertyValue("card_number", properties));
-            billingCardsItem.setExpDate(PluginProperties.findPluginPropertyValue("exp_date", properties));
-            billingCardsItem.setCvv2(PluginProperties.findPluginPropertyValue("cvv2", properties));
-            billingCardsItem
-                    .setBillingFirstName(PluginProperties.findPluginPropertyValue("billing_first_name", properties));
-            billingCardsItem
-                    .setBillingLastName(PluginProperties.findPluginPropertyValue("billing_last_name", properties));
-            billingCardsItem
-                    .setBillingFirmName(PluginProperties.findPluginPropertyValue("billing_firm_name", properties));
-            billingCardsItem.setBillingZip(PluginProperties.findPluginPropertyValue("billing_zip", properties));
-
+                // customerId (kbClientAccountId) has the key QUALPAY_CUSTOMER_ID on plugin
+            final String qualpayId = PluginProperties.findPluginPropertyValue("QUALPAY_CUSTOMER_ID", properties);
+            //
+            // Add the magic Custom Field
+            final PluginCustomField customField = new PluginCustomField(kbAccountId, ObjectType.ACCOUNT,
+                    "QUALPAY_CUSTOMER_ID", qualpayId, clock.getUTCNow());
+            
             try {
-                if (qualpayCustomerIdMaybeNull == null) {
-                    // Create customer and payment method
-                    final AddCustomerRequest addCustomerRequest = new AddCustomerRequest();
-                    addCustomerRequest.setAutoGenerateCustomerId(true);
-                    addCustomerRequest.addBillingCardsItem(billingCardsItem);
-                    final String customerFirstName = PluginProperties.findPluginPropertyValue("customer_first_name",
-                            properties);
-                    addCustomerRequest.setCustomerFirstName(
-                            customerFirstName != null ? customerFirstName : billingCardsItem.getBillingFirstName());
-                    final String customerLastName = PluginProperties.findPluginPropertyValue("customer_last_name",
-                            properties);
-                    addCustomerRequest.setCustomerLastName(
-                            customerLastName != null ? customerLastName : billingCardsItem.getBillingLastName());
-                    final String customerFirmName = PluginProperties.findPluginPropertyValue("customer_firm_name",
-                            properties);
-                    addCustomerRequest.setCustomerFirmName(
-                            customerFirmName != null ? customerFirmName : billingCardsItem.getBillingFirmName());
-                    final CustomerVault customerVault = customerVaultApi.addCustomer(addCustomerRequest).getData();
-                    // TODO Guaranteed it's the last one?
-                    final BillingCard createdBillingCard = customerVault.getBillingCards()
-                            .get(customerVault.getBillingCards().size() - 1);
-                    qualpayId = createdBillingCard.getCardId();
+                final QualpayConfigProperties qualpayConfigProperties = qualpayConfigPropertiesConfigurationHandler
+                        .getConfigurable(context.getTenantId());
+                killbillAPI.getSecurityApi().login(qualpayConfigProperties.getKbUsername(),
+                        qualpayConfigProperties.getKbPassword());
+                killbillAPI.getCustomFieldUserApi().addCustomFields(ImmutableList.<CustomField>of(customField),
+                        context);
+            } catch (CustomFieldApiException e) {
+                // TODO Auto-generated catch block
+                throw new PaymentPluginApiException("unable to add customfield to killbill", e);
+            } finally {
+                killbillAPI.getSecurityApi().logout();
+            }
 
-                    // Add the magic Custom Field
-                    final PluginCustomField customField = new PluginCustomField(kbAccountId, ObjectType.ACCOUNT,
-                            "QUALPAY_CUSTOMER_ID", customerVault.getCustomerId(), clock.getUTCNow());
-                    try {
-                        final QualpayConfigProperties qualpayConfigProperties = qualpayConfigPropertiesConfigurationHandler
-                                .getConfigurable(context.getTenantId());
-                        killbillAPI.getSecurityApi().login(qualpayConfigProperties.getKbUsername(),
-                                qualpayConfigProperties.getKbPassword());
-                        killbillAPI.getCustomFieldUserApi().addCustomFields(ImmutableList.<CustomField>of(customField),
-                                context);
-                    } finally {
-                        killbillAPI.getSecurityApi().logout();
-                    }
-                } else {
-                    // Add payment method to existing customer
-                    final CustomerResponse customerResponse = customerVaultApi
-                            .addBillingCard(qualpayCustomerIdMaybeNull, billingCardsItem);
-                    // TODO Guaranteed it's the last one?
-                    qualpayId = customerResponse.getData().getBillingCards()
-                            .get(customerResponse.getData().getBillingCards().size() - 1).getCardId();
-                }
-            } catch (final ApiException e) {
-                throw new PaymentPluginApiException("Error connecting to Qualpay: " + e.getResponseBody(), e);
-            } catch (final CustomFieldApiException e) {
-                throw new PaymentPluginApiException("Error adding custom field", e);
+            final Map<String, Object> additionalDataMap = PluginProperties.toMap(properties);
+            final DateTime utcNow = clock.getUTCNow();
+            try {
+                dao.addPaymentMethod(kbAccountId, kbPaymentMethodId, additionalDataMap, qualpayId, utcNow,
+                        context.getTenantId());
+            } catch (final SQLException e) {
+                throw new PaymentPluginApiException("Unable to add payment method to database", e);
             }
         }
-
-        final Map<String, Object> additionalDataMap = PluginProperties.toMap(properties);
-        final DateTime utcNow = clock.getUTCNow();
-        try {
-            dao.addPaymentMethod(kbAccountId, kbPaymentMethodId, additionalDataMap, qualpayId, utcNow,
-                    context.getTenantId());
-        } catch (final SQLException e) {
-            throw new PaymentPluginApiException("Unable to add payment method", e);
-        }
-    }
 
     @Override
     protected String getPaymentMethodId(final QualpayPaymentMethodsRecord record) {
@@ -235,28 +172,6 @@ public class QualpayPaymentPluginApi extends
     @Override
     public void deletePaymentMethod(final UUID kbAccountId, final UUID kbPaymentMethodId,
             final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
-        final QualpayPaymentMethodsRecord qualPayPaymentMethodsRecord;
-        try {
-            qualPayPaymentMethodsRecord = dao.getPaymentMethod(kbPaymentMethodId, context.getTenantId());
-        } catch (final SQLException e) {
-            throw new PaymentPluginApiException("Unable to retrieve payment method", e);
-        }
-
-        final DeleteBillingCardRequest deleteBillingCardRequest = new DeleteBillingCardRequest();
-        deleteBillingCardRequest.setCardId(qualPayPaymentMethodsRecord.getQualpayId());
-        deleteBillingCardRequest.setMerchantId(getMerchantId(context));
-
-        final String qualpayCustomerId = getCustomerId(kbAccountId, context);
-
-        final ApiClient apiClient = buildApiClient(context, true);
-        final CustomerVaultApi customerVaultApi = new CustomerVaultApi(apiClient);
-        try {
-            // Delete the card in the Vault
-            customerVaultApi.deleteBillingCard(qualpayCustomerId, deleteBillingCardRequest);
-        } catch (final ApiException e) {
-            throw new PaymentPluginApiException("Error connecting to Qualpay", e);
-        }
-
         // Delete our local copy
         super.deletePaymentMethod(kbAccountId, kbPaymentMethodId, properties, context);
     }
@@ -267,48 +182,6 @@ public class QualpayPaymentPluginApi extends
         // If refreshFromGateway isn't set, simply read our tables
         if (!refreshFromGateway) {
             return super.getPaymentMethods(kbAccountId, refreshFromGateway, properties, context);
-        }
-
-        // Retrieve our currently known payment methods
-        final Map<String, QualpayPaymentMethodsRecord> existingPaymentMethodByQualpayId = new HashMap<String, QualpayPaymentMethodsRecord>();
-        try {
-            final List<QualpayPaymentMethodsRecord> existingQualpayPaymentMethodRecords = dao
-                    .getPaymentMethods(kbAccountId, context.getTenantId());
-            for (final QualpayPaymentMethodsRecord existingQualpayPaymentMethodRecord : existingQualpayPaymentMethodRecords) {
-                existingPaymentMethodByQualpayId.put(existingQualpayPaymentMethodRecord.getQualpayId(),
-                        existingQualpayPaymentMethodRecord);
-            }
-        } catch (final SQLException e) {
-            throw new PaymentPluginApiException("Unable to retrieve existing payment methods", e);
-        }
-
-        // To retrieve all payment methods in Qualpay, retrieve the Qualpay customer id
-        // (custom field on the account)
-        final String qualpayCustomerId = getCustomerId(kbAccountId, context);
-
-        // Sync Qualpay payment methods (source of truth)
-        final ApiClient apiClient = buildApiClient(context, true);
-        final CustomerVaultApi customerVaultApi = new CustomerVaultApi(apiClient);
-        try {
-            final GetBillingResponse billingResponse = customerVaultApi.getBillingCards(qualpayCustomerId,
-                    getMerchantId(context));
-            final GetBillingCardsResponse billingCardsResponse = billingResponse.getData();
-            syncPaymentMethods(kbAccountId, billingCardsResponse.getBillingCards(), existingPaymentMethodByQualpayId,
-                    context);
-        } catch (final ApiException e) {
-            throw new PaymentPluginApiException("Error connecting to Qualpay", e);
-        } catch (final PaymentApiException e) {
-            throw new PaymentPluginApiException("Error creating payment method", e);
-        } catch (final SQLException e) {
-            throw new PaymentPluginApiException("Error creating payment method", e);
-        }
-
-        for (final QualpayPaymentMethodsRecord qualpayPaymentMethodsRecord : existingPaymentMethodByQualpayId
-                .values()) {
-            logger.info("Deactivating local Qualpay payment method {} - not found in Qualpay",
-                    qualpayPaymentMethodsRecord.getQualpayId());
-            super.deletePaymentMethod(kbAccountId, UUID.fromString(qualpayPaymentMethodsRecord.getKbPaymentMethodId()),
-                    properties, context);
         }
 
         // Refresh the state
@@ -358,7 +231,8 @@ public class QualpayPaymentPluginApi extends
     public PaymentTransactionInfoPlugin capturePayment(final UUID kbAccountId, final UUID kbPaymentId,
             final UUID kbTransactionId, final UUID kbPaymentMethodId, final BigDecimal amount, final Currency currency,
             final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
-                throw new PaymentPluginApiException("INTERNAL", "#capturePayment not yet implemented, please contact support team");
+               final QualpayResponsesRecord responsesRecord = new QualpayResponsesRecord();
+               return QualpayPaymentTransactionInfoPlugin.build(responsesRecord);
         }
 
     @Override
@@ -379,7 +253,8 @@ public class QualpayPaymentPluginApi extends
     public PaymentTransactionInfoPlugin voidPayment(final UUID kbAccountId, final UUID kbPaymentId,
             final UUID kbTransactionId, final UUID kbPaymentMethodId, final Iterable<PluginProperty> properties,
             final CallContext context) throws PaymentPluginApiException {
-                throw new PaymentPluginApiException("INTERNAL", "#void payment not yet implemented, please contact support team");
+                final QualpayResponsesRecord responsesRecord = new QualpayResponsesRecord();
+               return QualpayPaymentTransactionInfoPlugin.build(responsesRecord);
             }
 
     @Override
@@ -398,24 +273,8 @@ public class QualpayPaymentPluginApi extends
     public PaymentTransactionInfoPlugin refundPayment(final UUID kbAccountId, final UUID kbPaymentId,
             final UUID kbTransactionId, final UUID kbPaymentMethodId, final BigDecimal amount, final Currency currency,
             final Iterable<PluginProperty> properties, final CallContext context) throws PaymentPluginApiException {
-        return executeFollowUpTransaction(TransactionType.REFUND, new TransactionExecutor<GatewayResponse>() {
-            @Override
-            public GatewayResponse execute(final Account account,
-                    final QualpayPaymentMethodsRecord paymentMethodsRecord,
-                    final QualpayResponsesRecord previousResponse) throws ApiException {
-                final ApiClient apiClient = buildApiClient(context, false);
-                final PGApi pgApi = new PGApi(apiClient);
-
-                final Map additionalData = QualpayDao.fromAdditionalData(previousResponse.getAdditionalData());
-                final String pgId = (String) additionalData.get("id");
-
-                final PGApiRefundRequest refundRequest = new PGApiRefundRequest();
-                refundRequest.setMerchantId(getMerchantId(context));
-                refundRequest.setAmtTran(amount.doubleValue());
-
-                return pgApi.refund(pgId, refundRequest);
-            }
-        }, kbAccountId, kbPaymentId, kbTransactionId, kbPaymentMethodId, amount, currency, properties, context);
+               final QualpayResponsesRecord responsesRecord = new QualpayResponsesRecord();
+               return QualpayPaymentTransactionInfoPlugin.build(responsesRecord);
     }
 
     private PaymentTransactionInfoPlugin creditClient(final UUID kbAccountId, final UUID kbClientAccountId,

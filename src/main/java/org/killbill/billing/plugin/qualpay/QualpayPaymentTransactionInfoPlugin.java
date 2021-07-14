@@ -56,7 +56,7 @@ public class QualpayPaymentTransactionInfoPlugin extends PluginPaymentTransactio
         final String secondPaymentReferenceId = (String) additionalData.get("auth_code");
 
         final DateTime responseDate = new DateTime(qualpayResponsesRecord.getCreatedDate(), DateTimeZone.UTC);
-
+        
         return new QualpayPaymentTransactionInfoPlugin(qualpayResponsesRecord,
                                                        UUID.fromString(qualpayResponsesRecord.getKbPaymentId()),
                                                        UUID.fromString(qualpayResponsesRecord.getKbPaymentTransactionId()),
