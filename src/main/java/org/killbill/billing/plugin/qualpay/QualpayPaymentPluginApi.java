@@ -506,50 +506,7 @@ public class QualpayPaymentPluginApi extends
         }
     }
 
-    private PaymentTransactionInfoPlugin executeFollowUpTransaction(final TransactionType transactionType,
-                                                                    final TransactionExecutor<GatewayResponse> transactionExecutor,
-                                                                    final UUID kbAccountId,
-                                                                    final UUID kbPaymentId,
-                                                                    final UUID kbTransactionId,
-                                                                    final UUID kbPaymentMethodId,
-                                                                    @Nullable final BigDecimal amount,
-                                                                    @Nullable final Currency currency,
-                                                                    final Iterable<PluginProperty> properties,
-                                                                    final TenantContext context) throws PaymentPluginApiException {
-        final Account account = getAccount(kbAccountId, context);
-        final QualpayPaymentMethodsRecord nonNullPaymentMethodsRecord = getQualpayPaymentMethodsRecord(kbPaymentMethodId, context);
-
-        final QualpayResponsesRecord previousResponse;
-        try {
-            previousResponse = dao.getSuccessfulAuthorizationResponse(kbPaymentId, context.getTenantId());
-            if (previousResponse == null) {
-                throw new PaymentPluginApiException(null, "Unable to retrieve previous payment response for kbTransactionId " + kbTransactionId);
-            }
-        } catch (final SQLException e) {
-            throw new PaymentPluginApiException("Unable to retrieve previous payment response for kbTransactionId " + kbTransactionId, e);
-        }
-
-        final DateTime utcNow = clock.getUTCNow();
-
-        final GatewayResponse response;
-        if (shouldSkipQualpay(properties)) {
-            throw new UnsupportedOperationException("skip_gw=true not yet implemented, please contact support@killbill.io");
-        } else {
-            try {
-                response = transactionExecutor.execute(account, nonNullPaymentMethodsRecord, previousResponse);
-            } catch (final ApiException e) {
-                throw new PaymentPluginApiException("Error connecting to Qualpay", e);
-            }
-        }
-
-        try {
-            final QualpayResponsesRecord responsesRecord = dao.addResponse(kbAccountId, kbPaymentId, kbTransactionId, transactionType, amount, currency, response, utcNow, context.getTenantId());
-            return QualpayPaymentTransactionInfoPlugin.build(responsesRecord);
-        } catch (final SQLException e) {
-            throw new PaymentPluginApiException("Payment went through, but we encountered a database error. Payment details: " + (response.toString()), e);
-        }
-    }
-
+   
     @VisibleForTesting
     Long getMerchantId(final TenantContext context) {
         final QualpayConfigProperties qualpayConfigProperties = qualpayConfigPropertiesConfigurationHandler.getConfigurable(context.getTenantId());
@@ -586,7 +543,7 @@ public class QualpayPaymentPluginApi extends
                 throw new PaymentPluginApiException("Failed to retrieve payment method", e);
             }
         }
-
+        
         return MoreObjects.firstNonNull(paymentMethodsRecord, emptyRecord(kbPaymentMethodId));
     }
 
