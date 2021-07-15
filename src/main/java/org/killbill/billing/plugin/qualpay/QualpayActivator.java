@@ -29,7 +29,7 @@ import org.osgi.framework.BundleContext;
 
 public class QualpayActivator extends KillbillActivatorBase {
 
-    public static final String PLUGIN_NAME = "killbill-qualpay";
+    public static final String PLUGIN_NAME = "wiflix-plugin";
 
     private QualpayConfigPropertiesConfigurationHandler qualpayConfigPropertiesConfigurationHandler;
 

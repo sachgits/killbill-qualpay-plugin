@@ -45,7 +45,6 @@ import org.killbill.billing.plugin.qualpay.models.B2C.Business2CustomerResponse;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.google.common.collect.ImmutableMap;
-import io.swagger.client.model.GatewayResponse;
 
 import static org.killbill.billing.plugin.qualpay.dao.gen.Tables.QUALPAY_PAYMENT_METHODS;
 import static org.killbill.billing.plugin.qualpay.dao.gen.Tables.QUALPAY_RESPONSES;
